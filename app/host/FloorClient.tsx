@@ -21,8 +21,6 @@ export type ReservationRow = {
   notes: string | null;
   meal: string | null;
   spend_pkr: number | null;
-  expected_arrival_time?: string | null;
-  actual_arrival_time?: string | null;
   customers: { id: string; name: string | null; phone: string | null }[] | null;
   tables: { id: string; label: string; capacity: number }[] | null;
 };
@@ -32,11 +30,11 @@ type Props = {
   userId: string;
   tables: TableRow[];
   todays: ReservationRow[];
-  isNewFromUrl?: boolean;
-
 };
 
 type TableState = "available" | "reserved" | "seated" | "dirty";
+
+const TURN_MINUTES = 120;
 
 function bucket(status: string) {
   const s = (status || "").toLowerCase();
@@ -51,6 +49,21 @@ function fmtTime(d: Date) {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function addMinutes(d: Date, minutes: number) {
+  return new Date(d.getTime() + minutes * 60 * 1000);
+}
+
+function toLocalInputValue(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function fromISOorLocal(dt: string) {
+  const d = new Date(dt);
+  if (!Number.isNaN(d.getTime())) return d;
+  return new Date();
+}
+
 function computeTableState(now: Date, t: TableRow, res: ReservationRow[]) {
   const overlaps = res
     .filter((r) => {
@@ -63,10 +76,7 @@ function computeTableState(now: Date, t: TableRow, res: ReservationRow[]) {
       const rs = new Date(r.start_time);
       const re = new Date(r.end_time);
 
-      return (
-        rs <= new Date(now.getTime() + 1000 * 60 * 60 * 12) &&
-        re >= new Date(now.getTime() - 1000 * 60 * 60 * 12)
-      );
+      return rs <= addMinutes(now, 12 * 60) && re >= addMinutes(now, -12 * 60);
     })
     .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
 
@@ -90,15 +100,10 @@ function computeTableState(now: Date, t: TableRow, res: ReservationRow[]) {
   if (next) return { state: "reserved" as TableState, current: null, next };
   return { state: "available" as TableState, current: null, next: null };
 }
-  export default function FloorClient({ restaurantId, userId, tables, todays, isNewFromUrl }: Props) {
+
+export default function FloorClient({ restaurantId, userId, tables, todays }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
-
-  const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-
-  const [draftPartySize, setDraftPartySize] = useState<number>(2);
-  const [draftStartISO, setDraftStartISO] = useState<string>("");
 
   const now = useMemo(() => new Date(), []);
   const tableModels = useMemo(() => {
@@ -108,10 +113,19 @@ function computeTableState(now: Date, t: TableRow, res: ReservationRow[]) {
     });
   }, [now, tables, todays]);
 
-  const selected = useMemo(() => {
-    if (!selectedTableId) return null;
-    return tableModels.find((x) => x.table.id === selectedTableId) || null;
-  }, [tableModels, selectedTableId]);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selectedTableId, setSelectedTableId] = useState<string>("");
+
+  const [partySize, setPartySize] = useState<number>(2);
+  const [startLocal, setStartLocal] = useState<string>(toLocalInputValue(new Date()));
+  const [source, setSource] = useState<string>("phone");
+  const [notes, setNotes] = useState<string>("");
+
+  const [guestName, setGuestName] = useState<string>("");
+  const [guestPhone, setGuestPhone] = useState<string>("");
+
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string>("");
 
   useEffect(() => {
     const newParam = searchParams.get("new");
@@ -128,57 +142,103 @@ function computeTableState(now: Date, t: TableRow, res: ReservationRow[]) {
 
     if (sizeParam) {
       const n = parseInt(sizeParam, 10);
-      if (!Number.isNaN(n) && n > 0) setDraftPartySize(n);
+      if (!Number.isNaN(n) && n > 0) setPartySize(n);
     }
 
     if (dtParam) {
-      setDraftStartISO(dtParam);
+      const d = fromISOorLocal(dtParam);
+      setStartLocal(toLocalInputValue(d));
     }
   }, [searchParams]);
 
   function closeDrawer() {
     setDrawerOpen(false);
-    setSelectedTableId(null);
+    setError("");
     router.replace("/host");
   }
 
-  function openDrawerForTable(tableId: string) {
-    setSelectedTableId(tableId);
+  function openDrawerWithTable(id: string) {
+    setSelectedTableId(id);
     setDrawerOpen(true);
+    setError("");
   }
 
-  const showDrawer = drawerOpen && !!selected;
+  async function createReservation() {
+    setError("");
+    if (!selectedTableId) {
+      setError("Pick a table first");
+      return;
+    }
+
+    const t = tables.find((x) => x.id === selectedTableId);
+    if (!t) {
+      setError("Invalid table selected");
+      return;
+    }
+
+    if (partySize < 1) {
+      setError("Party size must be at least 1");
+      return;
+    }
+
+    if (partySize > t.capacity) {
+      setError("Party size exceeds table capacity");
+      return;
+    }
+
+    const start = new Date(startLocal);
+    if (Number.isNaN(start.getTime())) {
+      setError("Invalid date/time");
+      return;
+    }
+
+    const end = addMinutes(start, TURN_MINUTES);
+
+    setSaving(true);
+    try {
+      const res = await fetch("/api/reservations/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          restaurantId,
+          userId,
+          tableId: selectedTableId,
+          partySize,
+          startISO: start.toISOString(),
+          endISO: end.toISOString(),
+          source,
+          notes,
+          guestName,
+          guestPhone
+        })
+      });
+
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to create reservation");
+      }
+
+      closeDrawer();
+      router.refresh();
+    } catch (e: any) {
+      setError(e?.message || "Failed to create reservation");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <div style={{ position: "absolute", top: 12, left: 12, display: "flex", alignItems: "center", gap: 10 }}>
-        <span style={{ width: 10, height: 10, borderRadius: 999, background: "#22c55e", display: "inline-block" }} />
-        <span style={{ fontSize: 12, opacity: 0.8 }}>Live</span>
-      </div>
-
-      <div style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: 10, fontSize: 12, opacity: 0.85 }}>
-        <LegendDot label="Available" color="#22c55e" />
-        <LegendDot label="Reserved" color="#f59e0b" />
-        <LegendDot label="Seated" color="#3b82f6" />
-        <LegendDot label="Dirty" color="#a3a3a3" />
-      </div>
-
       <div style={{ position: "relative", width: 1100, height: 720 }}>
         {tableModels.map(({ table, state, current, next }) => {
           const x = table.pos_x ?? 60;
           const y = table.pos_y ?? 60;
 
           const color =
-            state === "available"
-              ? "#22c55e"
-              : state === "reserved"
-              ? "#f59e0b"
-              : state === "seated"
-              ? "#3b82f6"
-              : "#a3a3a3";
+            state === "available" ? "#22c55e" : state === "reserved" ? "#f59e0b" : state === "seated" ? "#3b82f6" : "#a3a3a3";
 
           const spendLabel = current?.spend_pkr ?? next?.spend_pkr ?? null;
-          const guestName = current?.customers?.[0]?.name || next?.customers?.[0]?.name || null;
+          const guest = current?.customers?.[0]?.name || next?.customers?.[0]?.name || null;
 
           const isSelected = selectedTableId === table.id;
 
@@ -186,7 +246,7 @@ function computeTableState(now: Date, t: TableRow, res: ReservationRow[]) {
             <button
               key={table.id}
               type="button"
-              onClick={() => openDrawerForTable(table.id)}
+              onClick={() => openDrawerWithTable(table.id)}
               style={{
                 all: "unset",
                 cursor: "pointer",
@@ -222,30 +282,21 @@ function computeTableState(now: Date, t: TableRow, res: ReservationRow[]) {
                 </span>
 
                 {spendLabel ? (
-                  <span
-                    style={{
-                      padding: "4px 8px",
-                      borderRadius: 999,
-                      background: "#111827",
-                      color: "white",
-                      fontSize: 12,
-                      fontWeight: 900
-                    }}
-                  >
+                  <span style={{ padding: "4px 8px", borderRadius: 999, background: "#111827", color: "white", fontSize: 12, fontWeight: 900 }}>
                     PKR {Math.round(Number(spendLabel))}
                   </span>
                 ) : null}
               </div>
 
               <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {guestName ? guestName : next ? `Next ${fmtTime(new Date(next.start_time))}` : "Free"}
+                {guest ? guest : next ? `Next ${fmtTime(new Date(next.start_time))}` : "Free"}
               </div>
             </button>
           );
         })}
       </div>
 
-      {showDrawer ? (
+      {drawerOpen ? (
         <div
           style={{
             position: "absolute",
@@ -261,25 +312,34 @@ function computeTableState(now: Date, t: TableRow, res: ReservationRow[]) {
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
             <div style={{ fontWeight: 900, fontSize: 16 }}>New reservation</div>
-            <button
-              type="button"
-              onClick={closeDrawer}
-              style={{ border: "1px solid #e8e8e8", borderRadius: 999, padding: "6px 10px", cursor: "pointer" }}
-            >
+            <button type="button" onClick={closeDrawer} style={{ border: "1px solid #e8e8e8", borderRadius: 999, padding: "6px 10px", cursor: "pointer" }}>
               Close
             </button>
           </div>
 
           <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
-            Table <b>{selected!.table.label}</b> · Capacity <b>{selected!.table.capacity}</b>
+            Table
           </div>
 
-          <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+          <select
+            value={selectedTableId}
+            onChange={(e) => setSelectedTableId(e.target.value)}
+            style={{ width: "100%", border: "1px solid #e8e8e8", borderRadius: 12, padding: "10px 12px", marginTop: 6 }}
+          >
+            <option value="">Select a table</option>
+            {tables.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label} (cap {t.capacity})
+              </option>
+            ))}
+          </select>
+
+          <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
             <label style={{ display: "grid", gap: 6, fontSize: 13 }}>
               Party size
               <input
-                value={draftPartySize}
-                onChange={(e) => setDraftPartySize(Math.max(1, parseInt(e.target.value || "1", 10)))}
+                value={partySize}
+                onChange={(e) => setPartySize(Math.max(1, parseInt(e.target.value || "1", 10)))}
                 type="number"
                 min={1}
                 style={{ border: "1px solid #e8e8e8", borderRadius: 12, padding: "10px 12px" }}
@@ -287,44 +347,64 @@ function computeTableState(now: Date, t: TableRow, res: ReservationRow[]) {
             </label>
 
             <label style={{ display: "grid", gap: 6, fontSize: 13 }}>
-              Start time (ISO for now)
+              Date and time
               <input
-                value={draftStartISO}
-                onChange={(e) => setDraftStartISO(e.target.value)}
-                placeholder="2026-01-13T20:00:00.000Z"
+                type="datetime-local"
+                value={startLocal}
+                onChange={(e) => setStartLocal(e.target.value)}
                 style={{ border: "1px solid #e8e8e8", borderRadius: 12, padding: "10px 12px" }}
               />
             </label>
 
-            <div style={{ fontSize: 12, opacity: 0.7 }}>
-              This drawer now opens when you
-              <br />
-              1) click a table, or
-              <br />
-              2) visit /host?new=1&amp;tableId=...&amp;dt=...&amp;size=...
-            </div>
+            <label style={{ display: "grid", gap: 6, fontSize: 13 }}>
+              Source
+              <select value={source} onChange={(e) => setSource(e.target.value)} style={{ border: "1px solid #e8e8e8", borderRadius: 12, padding: "10px 12px" }}>
+                <option value="phone">phone</option>
+                <option value="walkin">walkin</option>
+                <option value="app">app</option>
+                <option value="whatsapp">whatsapp</option>
+              </select>
+            </label>
 
-            <div style={{ fontSize: 12, opacity: 0.7 }}>
-              restaurantId: {restaurantId}
-              <br />
-              userId: {userId}
-            </div>
+            <label style={{ display: "grid", gap: 6, fontSize: 13 }}>
+              Guest name (optional)
+              <input value={guestName} onChange={(e) => setGuestName(e.target.value)} style={{ border: "1px solid #e8e8e8", borderRadius: 12, padding: "10px 12px" }} />
+            </label>
 
-            <div style={{ marginTop: 6, fontSize: 13, opacity: 0.85 }}>
-              Next: we’ll wire “Create reservation” to an API route that creates or finds a customer, then inserts the reservation with a real customer_id.
-            </div>
+            <label style={{ display: "grid", gap: 6, fontSize: 13 }}>
+              Guest phone (optional)
+              <input value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} style={{ border: "1px solid #e8e8e8", borderRadius: 12, padding: "10px 12px" }} />
+            </label>
+
+            <label style={{ display: "grid", gap: 6, fontSize: 13 }}>
+              Notes
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ border: "1px solid #e8e8e8", borderRadius: 12, padding: "10px 12px", height: 90 }} />
+            </label>
+
+            {error ? <div style={{ color: "#dc2626", fontWeight: 800, fontSize: 13 }}>{error}</div> : null}
+
+            <button
+              type="button"
+              onClick={createReservation}
+              disabled={saving}
+              style={{
+                marginTop: 6,
+                width: "100%",
+                border: "0",
+                borderRadius: 12,
+                padding: "12px 14px",
+                background: "#111827",
+                color: "white",
+                fontWeight: 900,
+                cursor: saving ? "not-allowed" : "pointer",
+                opacity: saving ? 0.6 : 1
+              }}
+            >
+              {saving ? "Saving..." : "Create reservation"}
+            </button>
           </div>
         </div>
       ) : null}
     </div>
-  );
-}
-
-function LegendDot({ label, color }: { label: string; color: string }) {
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-      <span style={{ width: 10, height: 10, borderRadius: 999, background: color }} />
-      {label}
-    </span>
   );
 }
