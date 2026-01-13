@@ -32,6 +32,8 @@ type Props = {
   userId: string;
   tables: TableRow[];
   todays: ReservationRow[];
+  isNewFromUrl?: boolean;
+
 };
 
 type TableState = "available" | "reserved" | "seated" | "dirty";
