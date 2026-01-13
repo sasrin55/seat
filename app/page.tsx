@@ -1,5 +1,5 @@
-import TodayPage from "./today/page";
+import HostConsolePage from "./host/page";
 
 export default function Home() {
-  return <TodayPage />;
+  return <HostConsolePage />;
 }
