@@ -143,11 +143,11 @@ export default async function HostConsolePage() {
           </div>
 
           <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Pill label={`Upcoming ${upcoming.length}`} />
-            <Pill label={`Seated ${seated.length}`} />
-            <Pill label={`Completed ${completed.length}`} />
-            <Pill label={`No shows ${noShows.length}`} />
-          </div>
+          <Pill label={"Upcoming " + upcoming.length} />
+          <Pill label={"Seated " + seated.length} />
+          <Pill label={"Completed " + completed.length} />
+          <Pill label={"No shows " + noShows.length} />
+        </div>
 
           <div style={{ marginTop: 12, display: "flex", gap: 10 }}>
             <Link href="/reservations/new">New reservation</Link>
@@ -317,4 +317,4 @@ function LegendDot({ label, color }: { label: string; color: string }) {
     </span>
   );
 }
-```
+
