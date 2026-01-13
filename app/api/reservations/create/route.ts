@@ -38,18 +38,41 @@ export async function POST(req: Request) {
     const restaurantId = body.restaurantId as string;
     const userId = body.userId as string;
     const tableId = body.tableId as string;
-
     const partySize = Number(body.partySize);
     const startISO = body.startISO as string;
     const endISO = body.endISO as string;
-
     const source = (body.source as string) || "phone";
     const notes = (body.notes as string) || null;
 
     const supabase = getSupabaseAdmin();
 
+    // 1. Get the Guest Customer ID
     const customerId = await getOrCreateGuestCustomerId(supabase, restaurantId);
 
+    // 2. Check for conflicts
+    // This logic finds any reservation where the times overlap:
+    // (ExistingStart < NewEnd) AND (ExistingEnd > NewStart)
+    const { data: conflicts, error: conflictErr } = await supabase
+      .from("reservations")
+      .select("id")
+      .eq("table_id", tableId)
+      .neq("status", "cancelled")
+      .lt("start_time", endISO)
+      .gt("end_time", startISO)
+      .limit(1);
+
+    if (conflictErr) {
+        return NextResponse.json({ error: conflictErr.message }, { status: 500 });
+    }
+
+    if (conflicts && conflicts.length > 0) {
+      return NextResponse.json(
+        { error: "Table is already booked for this time" },
+        { status: 409 }
+      );
+    }
+
+    // 3. If no conflicts, insert the reservation
     const { error: insErr } = await supabase.from("reservations").insert({
       restaurant_id: restaurantId,
       customer_id: customerId,
