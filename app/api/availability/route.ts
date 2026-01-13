@@ -1,62 +1,78 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseServer } from "@/lib/supabaseServer";
 
-function supabaseAdmin() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
+function addMinutes(d: Date, minutes: number) {
+  return new Date(d.getTime() + minutes * 60 * 1000);
 }
 
-export async function POST(req: Request) {
-  try {
-    const body = await req.json();
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
 
-    const {
-      restaurantId,
-      startISO,
-      endISO,
-      partySize
-    } = body;
+  const restaurantId = searchParams.get("restaurantId");
+  const start = searchParams.get("start"); // ISO string
+  const partySizeRaw = searchParams.get("partySize");
+  const durationMinutesRaw = searchParams.get("durationMinutes") || "120";
 
-    const supabase = supabaseAdmin();
-
-    // 1. Get tables that can fit party size
-    const { data: tables, error: tablesErr } = await supabase
-      .from("tables")
-      .select("id,label,capacity")
-      .eq("restaurant_id", restaurantId)
-      .gte("capacity", partySize);
-
-    if (tablesErr) throw tablesErr;
-
-    if (!tables || tables.length === 0) {
-      return NextResponse.json({ available: [] });
-    }
-
-    const tableIds = tables.map(t => t.id);
-
-    // 2. Find conflicting reservations
-    const { data: conflicts, error: conflictErr } = await supabase
-      .from("reservations")
-      .select("table_id")
-      .in("table_id", tableIds)
-      .neq("status", "cancelled")
-      .lt("start_time", endISO)
-      .gt("end_time", startISO);
-
-    if (conflictErr) throw conflictErr;
-
-    const blocked = new Set((conflicts || []).map(r => r.table_id));
-
-    // 3. Return only available tables
-    const available = tables.filter(t => !blocked.has(t.id));
-
-    return NextResponse.json({ available });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e.message || "Availability check failed" },
-      { status: 500 }
-    );
+  if (!restaurantId || !start || !partySizeRaw) {
+    return NextResponse.json({ error: "Missing restaurantId/start/partySize" }, { status: 400 });
   }
+
+  const partySize = Number(partySizeRaw);
+  const durationMinutes = Number(durationMinutesRaw);
+
+  const startTime = new Date(start);
+  const endTime = addMinutes(startTime, durationMinutes);
+
+  const supabase = supabaseServer();
+
+  // 1) get all tables that can fit party size
+  const { data: tables, error: tErr } = await supabase
+    .from("tables")
+    .select("id,label,capacity,pos_x,pos_y")
+    .eq("restaurant_id", restaurantId)
+    .gte("capacity", partySize)
+    .order("capacity", { ascending: true });
+
+  if (tErr) return NextResponse.json({ error: tErr.message }, { status: 500 });
+
+  const tableIds = (tables ?? []).map((t) => t.id);
+  if (tableIds.length === 0) return NextResponse.json({ available: [], blocked: [] });
+
+  // 2) find reservations that overlap that time window
+  // overlap rule: existing.start < new.end AND existing.end > new.start
+  const { data: conflicts, error: cErr } = await supabase
+    .from("reservations")
+    .select("id, table_id, start_time, end_time, status, party_size")
+    .eq("restaurant_id", restaurantId)
+    .in("table_id", tableIds)
+    .lt("start_time", endTime.toISOString())
+    .gt("end_time", startTime.toISOString())
+    .not("status", "in", "(cancelled,no_show)");
+
+  if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 });
+
+  const conflictByTable = new Map<string, any[]>();
+  for (const r of conflicts ?? []) {
+    const list = conflictByTable.get(r.table_id) ?? [];
+    list.push(r);
+    conflictByTable.set(r.table_id, list);
+  }
+
+  const available = [];
+  const blocked = [];
+
+  for (const t of tables ?? []) {
+    const hits = conflictByTable.get(t.id) ?? [];
+    if (hits.length === 0) available.push(t);
+    else blocked.push({ table: t, conflicts: hits });
+  }
+
+  return NextResponse.json({
+    start: startTime.toISOString(),
+    end: endTime.toISOString(),
+    partySize,
+    durationMinutes,
+    available,
+    blocked
+  });
 }
