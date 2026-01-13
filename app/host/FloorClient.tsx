@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 export type TableRow = {
   id: string;
@@ -53,12 +54,17 @@ function computeTableState(now: Date, t: TableRow, res: ReservationRow[]) {
     .filter((r) => {
       const rt = r.tables?.[0];
       if (!rt || rt.id !== t.id) return false;
+
       const b = bucket(r.status);
       if (b === "cancelled" || b === "no_show") return false;
 
       const rs = new Date(r.start_time);
       const re = new Date(r.end_time);
-      return rs <= new Date(now.getTime() + 1000 * 60 * 60 * 12) && re >= new Date(now.getTime() - 1000 * 60 * 60 * 12);
+
+      return (
+        rs <= new Date(now.getTime() + 1000 * 60 * 60 * 12) &&
+        re >= new Date(now.getTime() - 1000 * 60 * 60 * 12)
+      );
     })
     .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
 
@@ -84,7 +90,14 @@ function computeTableState(now: Date, t: TableRow, res: ReservationRow[]) {
 }
 
 export default function FloorClient({ restaurantId, userId, tables, todays }: Props) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const [draftPartySize, setDraftPartySize] = useState<number>(2);
+  const [draftStartISO, setDraftStartISO] = useState<string>("");
 
   const now = useMemo(() => new Date(), []);
   const tableModels = useMemo(() => {
@@ -95,8 +108,45 @@ export default function FloorClient({ restaurantId, userId, tables, todays }: Pr
   }, [now, tables, todays]);
 
   const selected = useMemo(() => {
+    if (!selectedTableId) return null;
     return tableModels.find((x) => x.table.id === selectedTableId) || null;
   }, [tableModels, selectedTableId]);
+
+  useEffect(() => {
+    const newParam = searchParams.get("new");
+    const dtParam = searchParams.get("dt");
+    const sizeParam = searchParams.get("size");
+    const tableParam = searchParams.get("tableId");
+
+    const shouldOpen = newParam === "1" || !!dtParam || !!sizeParam || !!tableParam;
+    if (!shouldOpen) return;
+
+    setDrawerOpen(true);
+
+    if (tableParam) setSelectedTableId(tableParam);
+
+    if (sizeParam) {
+      const n = parseInt(sizeParam, 10);
+      if (!Number.isNaN(n) && n > 0) setDraftPartySize(n);
+    }
+
+    if (dtParam) {
+      setDraftStartISO(dtParam);
+    }
+  }, [searchParams]);
+
+  function closeDrawer() {
+    setDrawerOpen(false);
+    setSelectedTableId(null);
+    router.replace("/host");
+  }
+
+  function openDrawerForTable(tableId: string) {
+    setSelectedTableId(tableId);
+    setDrawerOpen(true);
+  }
+
+  const showDrawer = drawerOpen && !!selected;
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
@@ -118,7 +168,13 @@ export default function FloorClient({ restaurantId, userId, tables, todays }: Pr
           const y = table.pos_y ?? 60;
 
           const color =
-            state === "available" ? "#22c55e" : state === "reserved" ? "#f59e0b" : state === "seated" ? "#3b82f6" : "#a3a3a3";
+            state === "available"
+              ? "#22c55e"
+              : state === "reserved"
+              ? "#f59e0b"
+              : state === "seated"
+              ? "#3b82f6"
+              : "#a3a3a3";
 
           const spendLabel = current?.spend_pkr ?? next?.spend_pkr ?? null;
           const guestName = current?.customers?.[0]?.name || next?.customers?.[0]?.name || null;
@@ -129,7 +185,7 @@ export default function FloorClient({ restaurantId, userId, tables, todays }: Pr
             <button
               key={table.id}
               type="button"
-              onClick={() => setSelectedTableId(table.id)}
+              onClick={() => openDrawerForTable(table.id)}
               style={{
                 all: "unset",
                 cursor: "pointer",
@@ -165,7 +221,16 @@ export default function FloorClient({ restaurantId, userId, tables, todays }: Pr
                 </span>
 
                 {spendLabel ? (
-                  <span style={{ padding: "4px 8px", borderRadius: 999, background: "#111827", color: "white", fontSize: 12, fontWeight: 900 }}>
+                  <span
+                    style={{
+                      padding: "4px 8px",
+                      borderRadius: 999,
+                      background: "#111827",
+                      color: "white",
+                      fontSize: 12,
+                      fontWeight: 900
+                    }}
+                  >
                     PKR {Math.round(Number(spendLabel))}
                   </span>
                 ) : null}
@@ -179,7 +244,7 @@ export default function FloorClient({ restaurantId, userId, tables, todays }: Pr
         })}
       </div>
 
-      {selected ? (
+      {showDrawer ? (
         <div
           style={{
             position: "absolute",
@@ -189,28 +254,64 @@ export default function FloorClient({ restaurantId, userId, tables, todays }: Pr
             height: "100%",
             background: "white",
             borderLeft: "1px solid #e8e8e8",
-            padding: 14
+            padding: 14,
+            overflow: "auto"
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
             <div style={{ fontWeight: 900, fontSize: 16 }}>New reservation</div>
-            <button onClick={() => setSelectedTableId(null)} style={{ border: "1px solid #e8e8e8", borderRadius: 999, padding: "6px 10px" }}>
+            <button
+              type="button"
+              onClick={closeDrawer}
+              style={{ border: "1px solid #e8e8e8", borderRadius: 999, padding: "6px 10px", cursor: "pointer" }}
+            >
               Close
             </button>
           </div>
 
           <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
-            Table <b>{selected.table.label}</b> · Capacity <b>{selected.table.capacity}</b>
+            Table <b>{selected!.table.label}</b> · Capacity <b>{selected!.table.capacity}</b>
           </div>
 
-          <div style={{ marginTop: 14, fontSize: 13, opacity: 0.85 }}>
-            Next step: we’ll wire this form to an API route that creates a customer (if needed) + reservation.
-          </div>
+          <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+            <label style={{ display: "grid", gap: 6, fontSize: 13 }}>
+              Party size
+              <input
+                value={draftPartySize}
+                onChange={(e) => setDraftPartySize(Math.max(1, parseInt(e.target.value || "1", 10)))}
+                type="number"
+                min={1}
+                style={{ border: "1px solid #e8e8e8", borderRadius: 12, padding: "10px 12px" }}
+              />
+            </label>
 
-          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-            restaurantId: {restaurantId}
-            <br />
-            userId: {userId}
+            <label style={{ display: "grid", gap: 6, fontSize: 13 }}>
+              Start time (ISO for now)
+              <input
+                value={draftStartISO}
+                onChange={(e) => setDraftStartISO(e.target.value)}
+                placeholder="2026-01-13T20:00:00.000Z"
+                style={{ border: "1px solid #e8e8e8", borderRadius: 12, padding: "10px 12px" }}
+              />
+            </label>
+
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              This drawer now opens when you
+              <br />
+              1) click a table, or
+              <br />
+              2) visit /host?new=1&amp;tableId=...&amp;dt=...&amp;size=...
+            </div>
+
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              restaurantId: {restaurantId}
+              <br />
+              userId: {userId}
+            </div>
+
+            <div style={{ marginTop: 6, fontSize: 13, opacity: 0.85 }}>
+              Next: we’ll wire “Create reservation” to an API route that creates or finds a customer, then inserts the reservation with a real customer_id.
+            </div>
           </div>
         </div>
       ) : null}
