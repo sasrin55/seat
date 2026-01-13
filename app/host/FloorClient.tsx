@@ -90,8 +90,7 @@ function computeTableState(now: Date, t: TableRow, res: ReservationRow[]) {
   if (next) return { state: "reserved" as TableState, current: null, next };
   return { state: "available" as TableState, current: null, next: null };
 }
-
-export default function FloorClient({ restaurantId, userId, tables, todays }: Props) {
+  export default function FloorClient({ restaurantId, userId, tables, todays, isNewFromUrl }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
