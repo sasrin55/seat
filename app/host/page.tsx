@@ -1,5 +1,7 @@
+```tsx
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabaseServer";
+import FloorClient from "./FloorClient";
 
 const TURN_MINUTES = 120;
 
@@ -50,48 +52,12 @@ function bucket(status: string) {
   return "confirmed";
 }
 
-type TableState = "available" | "reserved" | "seated" | "dirty";
-
-function computeTableState(now: Date, t: TableRow, res: ReservationRow[]) {
-  const overlaps = res
-    .filter((r) => {
-      const rt = r.tables?.[0];
-      if (!rt || rt.id !== t.id) return false;
-      const b = bucket(r.status);
-      if (b === "cancelled" || b === "no_show") return false;
-
-      const rs = new Date(r.start_time);
-      const re = new Date(r.end_time);
-      return rs < new Date(now.getTime() + 1000 * 60 * 60 * 24) && re > new Date(now.getTime() - 1000 * 60 * 60 * 24);
-    })
-    .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
-
-  const current = overlaps.find((r) => {
-    const b = bucket(r.status);
-    if (b !== "seated" && b !== "confirmed" && b !== "completed") return false;
-    const rs = new Date(r.start_time);
-    const re = new Date(r.end_time);
-    return rs <= now && re > now;
-  });
-
-  const next = overlaps.find((r) => new Date(r.start_time) > now && bucket(r.status) === "confirmed");
-
-  if (current) {
-    const b = bucket(current.status);
-    if (b === "seated") return { state: "seated" as TableState, current, next };
-    if (b === "completed") return { state: "dirty" as TableState, current, next };
-    return { state: "reserved" as TableState, current, next };
-  }
-
-  if (next) return { state: "reserved" as TableState, current: null, next };
-  return { state: "available" as TableState, current: null, next: null };
-}
-
 export default async function HostConsolePage() {
   const supabase = supabaseServer();
   const now = new Date();
 
   const restaurantId = "4c08b577-cd30-40e8-9c5b-ca9755899d5e";
+  const userId = "9fcd27ac-280d-4831-bc01-094ea96054bc";
 
   const dayStart = startOfDay(now);
   const dayEnd = endOfDay(now);
@@ -105,7 +71,8 @@ export default async function HostConsolePage() {
 
     supabase
       .from("reservations")
-      .select(`
+      .select(
+        `
         id,
         start_time,
         end_time,
@@ -117,34 +84,43 @@ export default async function HostConsolePage() {
         spend_pkr,
         customers(id,name,phone),
         tables(id,label,capacity)
-      `)
+      `
+      )
       .eq("restaurant_id", restaurantId)
       .gte("start_time", toISO(dayStart))
       .lte("start_time", toISO(dayEnd))
-      .order("start_time", { ascending: true })
+      .order("start_time", { ascending: true }),
   ]);
 
   const allTables = (tables ?? []) as unknown as TableRow[];
   const todays = (reservations ?? []) as unknown as ReservationRow[];
 
-  const upcoming = todays.filter((r) => bucket(r.status) === "confirmed" && new Date(r.start_time) > now);
+  const upcoming = todays.filter(
+    (r) => bucket(r.status) === "confirmed" && new Date(r.start_time) > now
+  );
   const seated = todays.filter((r) => bucket(r.status) === "seated");
   const completed = todays.filter((r) => bucket(r.status) === "completed");
   const noShows = todays.filter((r) => bucket(r.status) === "no_show");
 
-  const floorWidth = 1100;
   const floorHeight = 720;
 
-  const tableModels = allTables.map((t) => {
-    const m = computeTableState(now, t, todays);
-    return { table: t, ...m };
-  });
-
   return (
-    <main style={{ padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial" }}>
+    <main
+      style={{
+        padding: 16,
+        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial",
+      }}
+    >
       <TopBar now={now} />
 
-      <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 14, marginTop: 14 }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "340px 1fr",
+          gap: 14,
+          marginTop: 14,
+        }}
+      >
         <aside
           style={{
             border: "1px solid #e8e8e8",
@@ -152,14 +128,18 @@ export default async function HostConsolePage() {
             padding: 12,
             height: floorHeight,
             overflow: "auto",
-            background: "white"
+            background: "white",
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "baseline",
+            }}
+          >
             <div style={{ fontWeight: 700, fontSize: 16 }}>Reservations</div>
-            <div style={{ opacity: 0.7, fontSize: 12 }}>
-              {todays.length} today
-            </div>
+            <div style={{ opacity: 0.7, fontSize: 12 }}>{todays.length} today</div>
           </div>
 
           <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -176,7 +156,9 @@ export default async function HostConsolePage() {
           </div>
 
           <div style={{ marginTop: 14 }}>
-            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>Today’s book</div>
+            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
+              Today’s book
+            </div>
 
             {todays.length === 0 ? (
               <div style={{ opacity: 0.7 }}>No reservations today yet.</div>
@@ -192,7 +174,7 @@ export default async function HostConsolePage() {
                       style={{
                         border: "1px solid #efefef",
                         borderRadius: 12,
-                        padding: 10
+                        padding: 10,
                       }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
@@ -228,7 +210,7 @@ export default async function HostConsolePage() {
             background: "#fbfbfb",
             height: floorHeight,
             position: "relative",
-            overflow: "hidden"
+            overflow: "hidden",
           }}
         >
           <div style={{ position: "absolute", top: 12, left: 12, display: "flex", alignItems: "center", gap: 10 }}>
@@ -238,7 +220,7 @@ export default async function HostConsolePage() {
                 height: 10,
                 borderRadius: 999,
                 background: "#22c55e",
-                display: "inline-block"
+                display: "inline-block",
               }}
             />
             <span style={{ fontSize: 12, opacity: 0.8 }}>Live</span>
@@ -251,81 +233,12 @@ export default async function HostConsolePage() {
             <LegendDot label="Dirty" color="#a3a3a3" />
           </div>
 
-          <div style={{ position: "relative", width: floorWidth, height: floorHeight }}>
-            {tableModels.map(({ table, state, current, next }) => {
-              const x = table.pos_x ?? 60;
-              const y = table.pos_y ?? 60;
-
-              const color =
-                state === "available"
-                  ? "#22c55e"
-                  : state === "reserved"
-                  ? "#f59e0b"
-                  : state === "seated"
-                  ? "#3b82f6"
-                  : "#a3a3a3";
-
-              const spendLabel = current?.spend_pkr ?? next?.spend_pkr ?? null;
-              const guestName = current?.customers?.[0]?.name || next?.customers?.[0]?.name || null;
-
-              return (
-                <div
-                  key={table.id}
-                  style={{
-                    position: "absolute",
-                    transform: `translate(${x}px, ${y}px)`,
-                    width: 120,
-                    height: 88,
-                    borderRadius: 16,
-                    border: "1px solid #e8e8e8",
-                    background: "white",
-                    boxShadow: "0 1px 0 rgba(0,0,0,0.03)",
-                    padding: 10
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                    <div style={{ fontWeight: 800 }}>{table.label}</div>
-                    <div style={{ fontSize: 12, opacity: 0.7 }}>cap {table.capacity}</div>
-                  </div>
-
-                  <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span
-                      style={{
-                        padding: "4px 8px",
-                        borderRadius: 999,
-                        background: `${color}1A`,
-                        border: `1px solid ${color}55`,
-                        color,
-                        fontSize: 12,
-                        fontWeight: 700
-                      }}
-                    >
-                      {state}
-                    </span>
-
-                    {spendLabel ? (
-                      <span
-                        style={{
-                          padding: "4px 8px",
-                          borderRadius: 999,
-                          background: "#111827",
-                          color: "white",
-                          fontSize: 12,
-                          fontWeight: 800
-                        }}
-                      >
-                        PKR {spendLabel}
-                      </span>
-                    ) : null}
-                  </div>
-
-                  <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {guestName ? guestName : next ? `Next ${fmtTime(new Date(next.start_time))}` : "Free"}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <FloorClient
+            restaurantId={restaurantId}
+            userId={userId}
+            tables={allTables}
+            todays={todays}
+          />
         </section>
       </div>
     </main>
@@ -343,7 +256,7 @@ function TopBar({ now }: { now: Date }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        gap: 10
+        gap: 10,
       }}
     >
       <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
@@ -372,7 +285,7 @@ function Pill({ label }: { label: string }) {
         padding: "6px 10px",
         background: "#fafafa",
         fontSize: 12,
-        fontWeight: 700
+        fontWeight: 700,
       }}
     >
       {label}
@@ -388,7 +301,7 @@ function MiniTag({ label }: { label: string }) {
         borderRadius: 999,
         padding: "3px 8px",
         fontSize: 12,
-        opacity: 0.9
+        opacity: 0.9,
       }}
     >
       {label}
@@ -404,3 +317,4 @@ function LegendDot({ label, color }: { label: string; color: string }) {
     </span>
   );
 }
+```
