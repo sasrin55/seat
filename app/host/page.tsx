@@ -98,7 +98,6 @@ export default async function HostConsolePage({ searchParams }: { searchParams: 
             userId={userId} 
             tables={allTables} 
             todays={todays} 
-            isNewFromUrl={!!searchParams.new} 
           />
         </section>
       </div>
