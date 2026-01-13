@@ -203,4 +203,207 @@ export default async function TodayPage() {
       if (s === "completed") cur.visits += 1;
       if (s === "no_show") cur.no_shows += 1;
 
-      if (typeof r.spend_pkr =_
+      if (typeof r.spend_pkr === "number") {
+        cur.spendSum += r.spend_pkr;
+        cur.spendCount += 1;
+      }
+
+      if (!cur.lastVisit || new Date(r.start_time) > new Date(cur.lastVisit)) cur.lastVisit = r.start_time;
+
+      agg.set(r.customer_id, cur);
+    }
+
+    for (const [cid, a] of agg.entries()) {
+      historyMap.set(cid, {
+        customer_id: cid,
+        visits: a.visits,
+        no_shows: a.no_shows,
+        avg_spend: a.spendCount > 0 ? Math.round(a.spendSum / a.spendCount) : null,
+        last_visit: a.lastVisit
+      });
+    }
+  }
+
+  function nextAvailableForParty(partySize: number) {
+    const candidates = allTables.filter((t) => t.capacity >= partySize);
+    if (candidates.length === 0) return null;
+
+    const searchStart = new Date(now);
+    searchStart.setSeconds(0, 0);
+
+    const searchEnd = addMinutes(searchStart, 6 * 60);
+
+    for (let t = new Date(searchStart); t <= searchEnd; t = addMinutes(t, 30)) {
+      const slotStart = t;
+      const slotEnd = addMinutes(t, TURN_MINUTES);
+
+      const ok = candidates.some((table) => {
+        const overlaps = activeRes.some((r) => {
+          const rt = r.tables?.[0];
+          if (!rt || rt.id !== table.id) return false;
+
+          const s = statusBucket(r.status);
+          if (s === "cancelled" || s === "no_show") return false;
+
+          const rs = new Date(r.start_time);
+          const re = new Date(r.end_time);
+
+          return rs < slotEnd && re > slotStart;
+        });
+
+        return !overlaps;
+      });
+
+      if (ok) return slotStart;
+    }
+
+    return null;
+  }
+
+  const next2 = nextAvailableForParty(2);
+  const next4 = nextAvailableForParty(4);
+  const next6 = nextAvailableForParty(6);
+
+  return (
+    <main style={{ maxWidth: 980, margin: "0 auto", padding: 20 }}>
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 16 }}>
+        <div>
+          <h1 style={{ margin: 0 }}>Today</h1>
+          <div style={{ marginTop: 6, opacity: 0.8 }}>
+            {now.toLocaleDateString()} · {fmtTime(now)}
+          </div>
+        </div>
+
+        <nav style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <Link href="/today">Today</Link>
+          <Link href="/tables">Floor</Link>
+          <Link href="/reservations/new">New Reservation</Link>
+          <Link href="/customers">Guests</Link>
+          <Link href="/settings">Settings</Link>
+        </nav>
+      </header>
+
+      <section style={{ marginTop: 18, display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10 }}>
+        <Kpi title="Covers" value={coversToday} />
+        <Kpi title="Reservations" value={activeRes.length} />
+        <Kpi title="Seated now" value={seatedNow.length} />
+        <Kpi title="Upcoming" value={upcoming.length} />
+        <Kpi title="Available tables" value={`${availableNow.length}/${allTables.length}`} />
+        <Kpi
+          title="Next free"
+          value={nextTableFree ? `${nextTableFree.label} ${fmtTime(nextTableFree.time)}` : "Now"}
+        />
+      </section>
+
+      <section style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+        <Kpi title="Next for 2" value={next2 ? fmtTime(next2) : "None"} />
+        <Kpi title="Next for 4" value={next4 ? fmtTime(next4) : "None"} />
+        <Kpi title="Next for 6" value={next6 ? fmtTime(next6) : "None"} />
+      </section>
+
+      <section style={{ marginTop: 22, display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14 }}>
+        <div>
+          <h2 style={{ margin: "0 0 10px 0" }}>Today’s book</h2>
+
+          {activeRes.length === 0 ? (
+            <p>No reservations today yet.</p>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {activeRes.map((r) => {
+                const c = r.customers?.[0];
+                const t = r.tables?.[0];
+                const hist = c?.id ? historyMap.get(c.id) : undefined;
+
+                const time = fmtTime(new Date(r.start_time));
+                const repeat = (hist?.visits ?? 0) >= 2;
+
+                const likely = likelyToShowLabel(hist, r, now);
+                const avgSpend = hist?.avg_spend ?? null;
+
+                return (
+                  <div key={r.id} style={{ border: "1px solid #e5e5e5", borderRadius: 10, padding: 12 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                      <strong>
+                        {time} · Party {r.party_size}
+                        {t?.label ? ` · ${t.label}` : ""}
+                      </strong>
+                      <span style={{ opacity: 0.8 }}>{statusBucket(r.status)}</span>
+                    </div>
+
+                    <div style={{ marginTop: 6, display: "grid", gap: 4 }}>
+                      <div>
+                        <strong>Guest</strong> {c?.name || "Guest"} {c?.phone ? `(${c.phone})` : ""}
+                      </div>
+
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", opacity: 0.9 }}>
+                        <Tag label={repeat ? "Repeat" : "New"} />
+                        <Tag label={`Likely ${likely}`} />
+                        <Tag label={r.meal ? r.meal : "meal unknown"} />
+                        <Tag label={avgSpend ? `Avg PKR ${avgSpend}` : "Avg spend n/a"} />
+                        <Tag label={r.source ? r.source : "source n/a"} />
+                        {r.notes ? <Tag label={r.notes} /> : null}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <h2 style={{ margin: "0 0 10px 0" }}>Live</h2>
+
+          <div style={{ border: "1px solid #e5e5e5", borderRadius: 10, padding: 12 }}>
+            <div style={{ display: "grid", gap: 6 }}>
+              <div><strong>Available now</strong> {availableNow.length}</div>
+              <div><strong>Busy now</strong> {busyNow.length}</div>
+              <div><strong>Completed</strong> {completed.length}</div>
+              <div><strong>No shows</strong> {noShows.length}</div>
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <strong>Available tables</strong>
+              {availableNow.length === 0 ? (
+                <p style={{ marginTop: 6 }}>None right now</p>
+              ) : (
+                <ul style={{ marginTop: 6 }}>
+                  {availableNow.slice(0, 10).map((t) => (
+                    <li key={t.id}>
+                      {t.label} (cap {t.capacity})
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function Kpi(props: { title: string; value: string | number }) {
+  return (
+    <div style={{ border: "1px solid #e5e5e5", borderRadius: 12, padding: 12 }}>
+      <div style={{ opacity: 0.75, fontSize: 12 }}>{props.title}</div>
+      <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{props.value}</div>
+    </div>
+  );
+}
+
+function Tag(props: { label: string }) {
+  return (
+    <span
+      style={{
+        border: "1px solid #ddd",
+        borderRadius: 999,
+        padding: "2px 8px",
+        fontSize: 12
+      }}
+    >
+      {props.label}
+    </span>
+  );
+}
+
