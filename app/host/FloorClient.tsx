@@ -127,6 +127,10 @@ export default function FloorClient({ restaurantId, userId, tables, todays }: Pr
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>("");
 
+  // --- NEW STATE FOR AVAILABILITY ---
+  const [availableTableIds, setAvailableTableIds] = useState<string[]>([]);
+  const [isChecking, setIsChecking] = useState(false);
+
   useEffect(() => {
     const newParam = searchParams.get("new");
     const dtParam = searchParams.get("dt");
@@ -151,9 +155,47 @@ export default function FloorClient({ restaurantId, userId, tables, todays }: Pr
     }
   }, [searchParams]);
 
+  // --- NEW: AUTO-CHECK AVAILABILITY EFFECT ---
+  useEffect(() => {
+    if (drawerOpen) {
+      checkAvailability();
+    }
+  }, [startLocal, partySize, drawerOpen, restaurantId]);
+
+  async function checkAvailability() {
+    const start = new Date(startLocal);
+    if (Number.isNaN(start.getTime())) return;
+
+    const end = addMinutes(start, TURN_MINUTES);
+
+    setIsChecking(true);
+    try {
+      const res = await fetch("/api/availability", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          restaurantId,
+          startISO: start.toISOString(),
+          endISO: end.toISOString(),
+          partySize
+        })
+      });
+
+      const json = await res.json();
+      if (res.ok && json.available) {
+        setAvailableTableIds(json.available.map((t: any) => t.id));
+      }
+    } catch (err) {
+      console.error("Availability check failed", err);
+    } finally {
+      setIsChecking(false);
+    }
+  }
+
   function closeDrawer() {
     setDrawerOpen(false);
     setError("");
+    setAvailableTableIds([]);
     router.replace("/host");
   }
 
@@ -184,6 +226,12 @@ export default function FloorClient({ restaurantId, userId, tables, todays }: Pr
     if (partySize > t.capacity) {
       setError("Party size exceeds table capacity");
       return;
+    }
+
+    // Check if the selected table is actually available based on API
+    if (availableTableIds.length > 0 && !availableTableIds.includes(selectedTableId)) {
+        setError("This table is no longer available for this time slot.");
+        return;
     }
 
     const start = new Date(startLocal);
@@ -307,11 +355,15 @@ export default function FloorClient({ restaurantId, userId, tables, todays }: Pr
             background: "white",
             borderLeft: "1px solid #e8e8e8",
             padding: 14,
-            overflow: "auto"
+            overflow: "auto",
+            opacity: isChecking ? 0.7 : 1, // Visual hint that we are checking availability
+            transition: "opacity 0.2s"
           }}
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-            <div style={{ fontWeight: 900, fontSize: 16 }}>New reservation</div>
+            <div style={{ fontWeight: 900, fontSize: 16 }}>
+                New reservation {isChecking && <span style={{ fontSize: 12, fontWeight: 400, color: "#666" }}> (Checking...)</span>}
+            </div>
             <button type="button" onClick={closeDrawer} style={{ border: "1px solid #e8e8e8", borderRadius: 999, padding: "6px 10px", cursor: "pointer" }}>
               Close
             </button>
@@ -327,11 +379,15 @@ export default function FloorClient({ restaurantId, userId, tables, todays }: Pr
             style={{ width: "100%", border: "1px solid #e8e8e8", borderRadius: 12, padding: "10px 12px", marginTop: 6 }}
           >
             <option value="">Select a table</option>
-            {tables.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.label} (cap {t.capacity})
-              </option>
-            ))}
+            {tables.map((t) => {
+              // Check if table is unavailable according to our API call
+              const isUnavailable = availableTableIds.length > 0 && !availableTableIds.includes(t.id);
+              return (
+                <option key={t.id} value={t.id} disabled={isUnavailable}>
+                  {t.label} (cap {t.capacity}) {isUnavailable ? "— OCCUPIED" : ""}
+                </option>
+              );
+            })}
           </select>
 
           <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
@@ -386,7 +442,7 @@ export default function FloorClient({ restaurantId, userId, tables, todays }: Pr
             <button
               type="button"
               onClick={createReservation}
-              disabled={saving}
+              disabled={saving || isChecking}
               style={{
                 marginTop: 6,
                 width: "100%",
@@ -396,8 +452,8 @@ export default function FloorClient({ restaurantId, userId, tables, todays }: Pr
                 background: "#111827",
                 color: "white",
                 fontWeight: 900,
-                cursor: saving ? "not-allowed" : "pointer",
-                opacity: saving ? 0.6 : 1
+                cursor: (saving || isChecking) ? "not-allowed" : "pointer",
+                opacity: (saving || isChecking) ? 0.6 : 1
               }}
             >
               {saving ? "Saving..." : "Create reservation"}
