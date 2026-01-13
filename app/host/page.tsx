@@ -1,4 +1,3 @@
-```tsx
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabaseServer";
 import FloorClient from "./FloorClient";
@@ -32,17 +31,21 @@ function startOfDay(d: Date) {
   x.setHours(0, 0, 0, 0);
   return x;
 }
+
 function endOfDay(d: Date) {
   const x = new Date(d);
   x.setHours(23, 59, 59, 999);
   return x;
 }
+
 function toISO(d: Date) {
   return d.toISOString();
 }
+
 function fmtTime(d: Date) {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
+
 function bucket(status: string) {
   const s = (status || "").toLowerCase();
   if (s === "cancelled") return "cancelled";
@@ -105,22 +108,10 @@ export default async function HostConsolePage() {
   const floorHeight = 720;
 
   return (
-    <main
-      style={{
-        padding: 16,
-        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial",
-      }}
-    >
+    <main style={{ padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial" }}>
       <TopBar now={now} />
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "340px 1fr",
-          gap: 14,
-          marginTop: 14,
-        }}
-      >
+      <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 14, marginTop: 14 }}>
         <aside
           style={{
             border: "1px solid #e8e8e8",
@@ -131,23 +122,17 @@ export default async function HostConsolePage() {
             background: "white",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "baseline",
-            }}
-          >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
             <div style={{ fontWeight: 700, fontSize: 16 }}>Reservations</div>
             <div style={{ opacity: 0.7, fontSize: 12 }}>{todays.length} today</div>
           </div>
 
           <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Pill label={"Upcoming " + upcoming.length} />
-          <Pill label={"Seated " + seated.length} />
-          <Pill label={"Completed " + completed.length} />
-          <Pill label={"No shows " + noShows.length} />
-        </div>
+            <Pill label={"Upcoming " + upcoming.length} />
+            <Pill label={"Seated " + seated.length} />
+            <Pill label={"Completed " + completed.length} />
+            <Pill label={"No shows " + noShows.length} />
+          </div>
 
           <div style={{ marginTop: 12, display: "flex", gap: 10 }}>
             <Link href="/reservations/new">New reservation</Link>
@@ -156,9 +141,7 @@ export default async function HostConsolePage() {
           </div>
 
           <div style={{ marginTop: 14 }}>
-            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
-              Today’s book
-            </div>
+            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>Today's book</div>
 
             {todays.length === 0 ? (
               <div style={{ opacity: 0.7 }}>No reservations today yet.</div>
@@ -168,6 +151,7 @@ export default async function HostConsolePage() {
                   const c = r.customers?.[0];
                   const t = r.tables?.[0];
                   const time = fmtTime(new Date(r.start_time));
+
                   return (
                     <div
                       key={r.id}
@@ -179,20 +163,20 @@ export default async function HostConsolePage() {
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                         <div style={{ fontWeight: 700 }}>
-                          {time} · {r.party_size}
-                          {t?.label ? ` · ${t.label}` : ""}
+                          {time} - {r.party_size}
+                          {t?.label ? " - " + t.label : ""}
                         </div>
                         <div style={{ fontSize: 12, opacity: 0.8 }}>{bucket(r.status)}</div>
                       </div>
 
                       <div style={{ marginTop: 6, opacity: 0.9 }}>
-                        {c?.name || "Guest"} {c?.phone ? `(${c.phone})` : ""}
+                        {c?.name || "Guest"} {c?.phone ? "(" + c.phone + ")" : ""}
                       </div>
 
                       <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
                         <MiniTag label={r.meal || "meal"} />
                         <MiniTag label={r.source || "source"} />
-                        <MiniTag label={r.spend_pkr ? `PKR ${r.spend_pkr}` : "Spend n/a"} />
+                        <MiniTag label={r.spend_pkr ? "PKR " + r.spend_pkr : "Spend n/a"} />
                         {r.notes ? <MiniTag label={r.notes} /> : null}
                       </div>
                     </div>
@@ -214,15 +198,7 @@ export default async function HostConsolePage() {
           }}
         >
           <div style={{ position: "absolute", top: 12, left: 12, display: "flex", alignItems: "center", gap: 10 }}>
-            <span
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: 999,
-                background: "#22c55e",
-                display: "inline-block",
-              }}
-            />
+            <span style={{ width: 10, height: 10, borderRadius: 999, background: "#22c55e", display: "inline-block" }} />
             <span style={{ fontSize: 12, opacity: 0.8 }}>Live</span>
           </div>
 
@@ -233,12 +209,7 @@ export default async function HostConsolePage() {
             <LegendDot label="Dirty" color="#a3a3a3" />
           </div>
 
-          <FloorClient
-            restaurantId={restaurantId}
-            userId={userId}
-            tables={allTables}
-            todays={todays}
-          />
+          <FloorClient restaurantId={restaurantId} userId={userId} tables={allTables} todays={todays} />
         </section>
       </div>
     </main>
@@ -262,7 +233,7 @@ function TopBar({ now }: { now: Date }) {
       <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
         <div style={{ fontWeight: 900, fontSize: 18 }}>Host Console</div>
         <div style={{ opacity: 0.7, fontSize: 12 }}>
-          {now.toLocaleDateString()} · {fmtTime(now)}
+          {now.toLocaleDateString()} {" - "} {fmtTime(now)}
         </div>
       </div>
 
@@ -317,4 +288,3 @@ function LegendDot({ label, color }: { label: string; color: string }) {
     </span>
   );
 }
-
